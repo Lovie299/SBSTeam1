@@ -1,6 +1,4 @@
-// app/contexts/ObservationContext.jsx
-// Hybrid Version - Preserves existing functionality with Repository Pattern
-
+// app/contexts/ObservationContext.jsx - Add getPendingCount function
 import React, { createContext, useState, useEffect, useCallback, useContext, useRef } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import NetInfo from '@react-native-community/netinfo';
@@ -17,14 +15,12 @@ import {
   serverTimestamp,
   deleteField
 } from 'firebase/firestore';
-import { getRepository } from '../../database/ObservationRepository';
+import * as FileSystem from 'expo-file-system';
 
 const ObservationContext = createContext();
 const STORAGE_KEY = '@silverback_observations';
-const IMAGES_STORAGE_KEY = '@silverback_observation_images';
 
 export const ObservationProvider = ({ children }) => {
-  // Existing states
   const [observations, setObservations] = useState([]);
   const [localObservations, setLocalObservations] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -33,29 +29,6 @@ export const ObservationProvider = ({ children }) => {
   const [lastSyncTime, setLastSyncTime] = useState(null);
   const [firestoreObservations, setFirestoreObservations] = useState([]);
   const isAddingRef = useRef(false);
-  
-  // New repository state
-  const [repository, setRepository] = useState(null);
-  const [useRepository, setUseRepository] = useState(false); // Flag to switch between implementations
-
-  // Initialize repository (optional - can be toggled)
-  useEffect(() => {
-    const initRepository = async () => {
-      try {
-        const repo = await getRepository();
-        setRepository(repo);
-        console.log('✅ Repository initialized (available as alternative)');
-        
-        // You can test repository by setting useRepository to true
-        // setUseRepository(true);
-      } catch (error) {
-        console.log('Repository not available, using existing implementation');
-      }
-    };
-    initRepository();
-  }, []);
-
-  // ==================== EXISTING IMPLEMENTATION (KEPT INTACT) ====================
 
   // Listen to Firestore observations (real-time)
   useEffect(() => {
@@ -130,8 +103,8 @@ export const ObservationProvider = ({ children }) => {
     }
   }, []);
 
-  // Add observation - EXISTING IMPLEMENTATION
-  const addObservation = useCallback(async (observationData) => {
+  // Add observation
+  const addObservation = useCallback(async (observationData, imageUris = []) => {
     if (isAddingRef.current) return null;
     isAddingRef.current = true;
     
@@ -144,11 +117,12 @@ export const ObservationProvider = ({ children }) => {
         userEmail: user?.email,
         userId: user?.uid || 'anonymous',
         createdAt: new Date().toISOString(),
-        localId: uuid.v4(),
+        synced: false,
+        syncedAt: null,
         status: 'pending',
+        imageUris: imageUris,
       };
 
-      // If online, save to Firestore immediately (without images)
       if (isOnline) {
         const { id, imageUris: imgUris, ...firestoreData } = newObservation;
         const docRef = await addDoc(collection(db, 'observations'), {
@@ -162,7 +136,6 @@ export const ObservationProvider = ({ children }) => {
         console.log('✅ Observation saved to Firestore, ID:', docRef.id);
         return { ...newObservation, id: docRef.id, synced: true };
       } else {
-        // Offline: save locally only
         const updated = [newObservation, ...localObservations];
         await saveObservations(updated);
         console.log('📶 Observation saved locally (offline)');
@@ -176,61 +149,7 @@ export const ObservationProvider = ({ children }) => {
     }
   }, [localObservations, saveObservations, isOnline]);
 
-  // Mark observation as attended - EXISTING IMPLEMENTATION
-  const markAsAttended = useCallback(async (observationId) => {
-    console.log('✅ Marking observation as attended:', observationId);
-    
-    try {
-      const observation = observations.find(obs => obs.id === observationId);
-      if (!observation) {
-        console.error('Observation not found');
-        return false;
-      }
-
-      if (isOnline) {
-        const observationRef = doc(db, 'observations', observationId);
-        await updateDoc(observationRef, {
-          status: 'attended',
-          attendedAt: new Date().toISOString(),
-          attendedBy: auth.currentUser?.uid,
-          attendedByName: auth.currentUser?.displayName || auth.currentUser?.email?.split('@')[0],
-        });
-        console.log('Updated status in Firestore');
-      }
-      
-      const updatedLocal = localObservations.map(obs => 
-        obs.id === observationId 
-          ? { 
-              ...obs, 
-              status: 'attended', 
-              attendedAt: new Date().toISOString(), 
-              attendedBy: auth.currentUser?.uid,
-              attendedByName: auth.currentUser?.displayName || auth.currentUser?.email?.split('@')[0]
-            }
-          : obs
-      );
-      await saveObservations(updatedLocal);
-      
-      setObservations(prev => prev.map(obs =>
-        obs.id === observationId
-          ? { 
-              ...obs, 
-              status: 'attended', 
-              attendedAt: new Date().toISOString(), 
-              attendedBy: auth.currentUser?.uid,
-              attendedByName: auth.currentUser?.displayName || auth.currentUser?.email?.split('@')[0]
-            }
-          : obs
-      ));
-      
-      return true;
-    } catch (error) {
-      console.error('Error marking as attended:', error);
-      return false;
-    }
-  }, [observations, localObservations, isOnline, saveObservations]);
-
-  // Sync unsynced observations - EXISTING IMPLEMENTATION
+  // Sync unsynced observations
   const syncNow = useCallback(async () => {
     if (!isOnline || isSyncing) return false;
     const unsynced = localObservations.filter(obs => !obs.synced);
@@ -255,7 +174,6 @@ export const ObservationProvider = ({ children }) => {
             imageCount: imageUris?.length || 0,
           });
           
-          // Remove synced observation from local storage
           const updatedLocal = localObservations.filter(o => o.id !== obs.id);
           await saveObservations(updatedLocal);
           successCount++;
@@ -276,7 +194,45 @@ export const ObservationProvider = ({ children }) => {
     }
   }, [localObservations, isOnline, isSyncing, saveObservations]);
 
-  // Network listener - EXISTING IMPLEMENTATION
+  // Mark observation as attended
+  const markAsAttended = useCallback(async (observationId) => {
+    console.log('✅ Marking as attended:', observationId);
+    const observation = observations.find(obs => obs.id === observationId);
+    if (!observation) {
+      console.error('Observation not found');
+      return false;
+    }
+
+    if (observation.source === 'firestore') {
+      try {
+        const obsRef = doc(db, 'observations', observationId);
+        await updateDoc(obsRef, {
+          status: 'attended',
+          attendedAt: new Date().toISOString(),
+          attendedBy: auth.currentUser?.uid,
+          attendedByName: auth.currentUser?.displayName || auth.currentUser?.email?.split('@')[0],
+        });
+        console.log('✅ Firestore updated for attended');
+      } catch (error) {
+        console.error('Firestore update failed:', error);
+      }
+    } else {
+      const updatedLocal = localObservations.map(obs =>
+        obs.id === observationId
+          ? { ...obs, status: 'attended', attendedAt: new Date().toISOString(), attendedBy: auth.currentUser?.uid }
+          : obs
+      );
+      await saveObservations(updatedLocal);
+    }
+    return true;
+  }, [observations, localObservations, saveObservations]);
+
+  // Get count of pending sync observations
+  const getPendingCount = useCallback(() => {
+    return localObservations.filter(obs => !obs.synced).length;
+  }, [localObservations]);
+
+  // Auto-sync when network comes online
   useEffect(() => {
     const unsubscribe = NetInfo.addEventListener(state => {
       const online = state.isConnected && state.isInternetReachable !== false;
@@ -293,63 +249,7 @@ export const ObservationProvider = ({ children }) => {
     loadObservations();
   }, []);
 
-  const getPendingCount = useCallback(() => localObservations.filter(obs => !obs.synced).length, [localObservations]);
-
-  // ==================== NEW REPOSITORY METHODS (OPTIONAL) ====================
-  
-  // Method to switch to repository mode (for testing)
-  const enableRepositoryMode = useCallback(async () => {
-    if (!repository) {
-      console.log('Repository not available');
-      return false;
-    }
-    setUseRepository(true);
-    
-    // Subscribe to repository changes
-    const unsubscribe = repository.subscribe((data) => {
-      setObservations(data);
-    });
-    
-    // Start Firestore listener
-    repository.startFirestoreListener();
-    
-    return () => unsubscribe();
-  }, [repository]);
-
-  // Repository-based add (if you want to test)
-  const addObservationViaRepository = useCallback(async (data) => {
-    if (!repository) return null;
-    
-    const user = auth.currentUser;
-    const newObservation = {
-      id: uuid.v4(),
-      localId: uuid.v4(),
-      gorillaGroup: data.gorillaGroup,
-      location: data.location,
-      locationName: data.locationName || null,
-      healthStatus: data.healthStatus || 'Not specified',
-      notes: data.notes || null,
-      userName: user?.displayName || user?.email?.split('@')[0] || 'Anonymous',
-      userEmail: user?.email,
-      userId: user?.uid || 'anonymous',
-      createdAt: new Date().toISOString(),
-      synced: false,
-      status: 'pending',
-    };
-    
-    return await repository.addObservation(newObservation);
-  }, [repository]);
-
-  // Repository-based sync
-  const syncViaRepository = useCallback(async () => {
-    if (!repository || !isOnline) return false;
-    await repository.syncNow();
-    setLastSyncTime(new Date().toISOString());
-    return true;
-  }, [repository, isOnline]);
-
   const value = {
-    // Existing values (kept as-is)
     observations,
     localObservations,
     isLoading,
@@ -359,12 +259,7 @@ export const ObservationProvider = ({ children }) => {
     addObservation,
     syncNow,
     markAsAttended,
-    
-    // New repository features (optional)
-    enableRepositoryMode,
-    addObservationViaRepository,
-    syncViaRepository,
-    repositoryMode: useRepository,
+    getPendingCount, // Make sure this is included in the value object
   };
 
   return <ObservationContext.Provider value={value}>{children}</ObservationContext.Provider>;
@@ -377,5 +272,3 @@ export const useObservations = () => {
   }
   return context;
 };
-
-export default ObservationProvider;
