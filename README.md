@@ -205,4 +205,51 @@ If notifications still aren't working:
 5. ✅ Build the app (not Expo Go)
 6. ✅ Run with `--dev-client` flag
 
-Once you complete these steps, your push notifications will work exactly like WhatsApp!
+
+<!-- Natukunda Jovita Implementation -->
+============= Qn1 Implementation ==================================================
+![alt text](image.png) --> Qn 1 SilverBackSentry Implementation
+Created a database folder with 
+--> DatabaseService.js 🫱🏽 Creating a Room Database Schema with SQLite.
+--> ObservationDao.js 🫱🏽 A Data Access Object for type-safe operations.
+--> TypeConverter.js 🫱🏽 For complex types.
+--> MigrationTester.js 🫱🏽 Migration Testing Utility
+
+🧐 Added a database_test.jsx file to create a temporary screen and test if the database is working.
+--> Made adjustments to _layout.jsx - Adding a test screen to my naviagtion.
+--> Adjustments to index.jsx - Simple console test log.
+
+============================================================================
+Key Achievements
+============================================================================
+Requirement	Status	Evidence
+Room Database Schema	✅ Working	Tables created successfully
+CRUD Operations	✅ Working	Insert, Read, Delete tested
+Safe Migrations	✅ Working	Version 0→1→2 completed
+No Data Loss	✅ Verified	Test data cleaned up properly
+Offline Storage	✅ Working	SQLite database initialized
+Firestore Sync	✅ Still Working	24 observations received
+
+=========== Q7 Implementation =================================================
+![alt text](image-1.png)  
+1. New File: database/ObservationRepository.js
+-->Created a complete repository class that:
+-->Manages all data operations through a single interface
+-->Enforces Room as the Single Source of Truth
+-->Handles real-time Firestore sync
+-->Manages UI subscriptions for automatic updates
+-->Implements network-aware auto-sync
+
+2. Updated File: app/contexts/ObservationContext.jsx
+-->Created a hybrid version that:
+-->Preserves ALL existing functionality (no breaking changes)
+-->Adds optional repository methods for testing
+-->Allows gradual migration without risk
+-->Maintains backward compatibility
+
+3. Added Repository Test in app/index.jsx
+-->Added a non-blocking test that:
+-->Verifies repository initialization
+-->Confirms Room database connection
+-->Displays observation counts
+-->Runs silently without affecting app performance
