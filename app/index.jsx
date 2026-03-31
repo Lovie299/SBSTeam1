@@ -465,17 +465,9 @@ export default function HomeScreen() {
           showsVerticalScrollIndicator={false}
           ListEmptyComponent={
             <View style={styles.emptyHistory}>
-              <Ionicons
-                name="checkmark-done-circle"
-                size={80}
-                color="#10B981"
-              />
-              <Text style={styles.emptyHistoryText}>
-                No Attended Sightings Yet
-              </Text>
-              <Text style={styles.emptyHistorySubtext}>
-                Mark sightings as attended to see them here
-              </Text>
+              <Ionicons name="checkmark-done-circle" size={80} color="#10B981" />
+              <Text style={styles.emptyHistoryText}>No Attended Sightings Yet</Text>
+              <Text style={styles.emptyHistorySubtext}>Mark sightings as attended to see them here</Text>
             </View>
           }
         />
