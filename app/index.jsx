@@ -1,29 +1,27 @@
-// app/index.jsx - Complete Fixed Version with Full Header Coverage
-import React, { useState, useRef, useEffect } from "react";
-import {
-  View,
-  Text,
-  StyleSheet,
-  TouchableOpacity,
-  ScrollView,
-  StatusBar,
+// app/index.jsx - Complete with Repository Testing
+import React, { useState, useRef, useEffect } from 'react';
+import { 
+  View, 
+  Text, 
+  StyleSheet, 
+  TouchableOpacity, 
+  ScrollView, 
+  StatusBar, 
   Alert,
   Modal,
   FlatList,
   RefreshControl,
   Animated,
   Dimensions,
-} from "react-native";
-import { useRouter } from "expo-router";
-import { useObservations } from "./contexts/ObservationContext";
-import { useAuth } from "./contexts/AuthContext";
-import {
-  useSafeAreaInsets,
-  SafeAreaView,
-} from "react-native-safe-area-context";
-import { Ionicons, FontAwesome5 } from "@expo/vector-icons";
-import { LinearGradient } from "expo-linear-gradient";
-import * as Haptics from "expo-haptics";
+} from 'react-native';
+import { useRouter } from 'expo-router';
+import { useObservations } from './contexts/ObservationContext';
+import { useAuth } from './contexts/AuthContext';
+import { useSafeAreaInsets, SafeAreaView } from 'react-native-safe-area-context';
+import { Ionicons, FontAwesome5 } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
+import * as Haptics from 'expo-haptics';
+import { getRepository } from '../database/ObservationRepository';
 
 const { width } = Dimensions.get("window");
 
@@ -45,6 +43,44 @@ export default function HomeScreen() {
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const scaleAnim = useRef(new Animated.Value(0.95)).current;
 
+  // ✅ FIXED: Repository test with proper error handling
+  useEffect(() => {
+    const testRepository = async () => {
+      try {
+        console.log('🔍 Testing Repository connection...');
+        const repo = await getRepository();
+        
+        if (!repo) {
+          console.log('⚠️ Repository not available');
+          return;
+        }
+        
+        console.log('✅ Repository ready');
+        
+        // Wait a moment for database to be fully initialized
+        await new Promise(resolve => setTimeout(resolve, 500));
+        
+        const all = await repo.getAllObservations();
+        console.log(`📊 Total observations: ${all.length}`);
+        
+        const unsynced = await repo.getUnsyncedObservations();
+        console.log(`📤 Unsynced: ${unsynced.length}`);
+        
+      } catch (error) {
+        console.error('❌ Repository test error:', error.message);
+        // Don't let test errors break the app
+      }
+    };
+    
+    // Run test after a short delay to ensure everything is initialized
+    const timer = setTimeout(() => {
+      testRepository();
+    }, 1000);
+    
+    return () => clearTimeout(timer);
+  }, []);
+
+  // Original animation useEffect
   useEffect(() => {
     Animated.parallel([
       Animated.timing(fadeAnim, {

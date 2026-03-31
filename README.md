@@ -218,58 +218,5 @@ If notifications still aren't working:
 5. ✅ Build the app (not Expo Go)
 6. ✅ Run with `--dev-client` flag
 
-<!-- Technical imeplementations, Questions 3, 8, 8 --EMAROT -->
-## The Three Core Technical Implementations from the Questions
 
-### Implementation 1: Location (GPS Fusion) - Enhanced Location Accuracy (Qn 3)
-
-#### 📍 Purpose
-Gorilla tracking requires precise location data, but GPS signals are notoriously unreliable under dense forest canopies. This implementation combines multiple location providers to deliver the most accurate coordinates possible when rangers log a sighting, ensuring that conservation teams can reliably locate and track gorilla groups.
-
-#### 🔧 Technical Approach
-- **Fused Location Provider:** Uses `expo-location` with `Location.Accuracy.Balanced` (equivalent to Android's `PRIORITY_BALANCED_POWER_ACCURACY`), which balances power consumption with location accuracy
-- **Fallback Mechanism:** Implements `getLastKnownPositionAsync()` as a fallback when GPS signal is weak or unavailable
-- **Accuracy Comparison:** Compares accuracy radii between current and last known locations, automatically selecting the most accurate source
-- **Confidence Indicator:** Displays a real-time accuracy meter showing both the margin of error (in meters) and the location source (GPS or Last Known)
-
-#### 📂 Implementation Location
-**File:** `app/tracking/index.jsx`
-**Key Function:** `useEffect` location initialization (lines 80-120)
-
-### Implementation 2: Connectivity Background Sync - Automatic Offline-Online Sync (Qn 8)
-#### 📍 Purpose
-Rangers work in areas with intermittent connectivity. This implementation ensures that no data is lost when offline, and automatically synchronizes all observations when a connection is restored—without requiring manual intervention or battery-draining polling.
-
-#### 🔧 Technical Approach
-**Event-Driven Sync:** Uses NetInfo.addEventListener() to detect network state changes (no polling, battery efficient)
-**Automatic Upload:** When device transitions from offline to online, syncNow() is triggered automatically
-
-**Offline Queue:** Unsynced observations are stored locally in AsyncStorage with a synced: false flag
-
-**Background Task:** Optional background fetch registered for Android (runs every 15 minutes) to sync even when app is closed
-
-#### 📂 Implementation Location
-**Main Sync Logic:** app/contexts/ObservationContext.jsx - syncNow() function
-**Network Listener:** app/contexts/ObservationContext.jsx - useEffect watching NetInfo
-**Background Sync:** app/backgroundSync.js (Android only)
-
-
-### Implementation 3: Offline Image Capture - Local Storage & Storage Management (Qn 5)
-#### 📍 Purpose
-Rangers need to document gorillas with photographs even when offline. This implementation allows multiple photos per sighting, stores them locally on the device, and actively manages storage space to prevent the device from filling up during long expeditions in the field.
-
-#### 🔧 Technical Approach
-**Local Image Storage:** Photos are saved to the app's document directory using expo-file-system
-
-**Multiple Photos Support:** Rangers can take multiple photos per sighting, all stored locally as URIs
-
-**Storage Space Monitoring:** Uses getFreeDiskStorageAsync() to check available space and warns when below 50MB
-
-**Image Gallery Preview:** Horizontal scrollable gallery showing all captured photos with ability to remove individual images
-
-**Offline-First Design:** No cloud storage required—images remain on device, eliminating data costs and ensuring offline access
-
-#### 📂 Implementation Location
-Camera Function: app/tracking/index.jsx - takePhoto() function
-Storage Check: app/utils/storageHelper.js - checkFreeSpace() function
-Image Gallery UI: Tracking screen modal showing photo previews
+<!-- Natukunda Jovita Implementation -->

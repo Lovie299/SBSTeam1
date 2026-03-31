@@ -14,7 +14,8 @@ import * as Haptics from 'expo-haptics';
 import { useEffect } from 'react';
 import { registerBackgroundSync } from './backgroundSync';
 
-// Custom Tab Bar Component (unchanged)
+
+// Custom Tab Bar Component
 function CustomTabBar({ state, descriptors, navigation }) {
   const currentRoute = usePathname();
   
@@ -114,6 +115,7 @@ function AppContent() {
         <Tabs.Screen name="tracking/index" options={{ title: 'Gorilla Tracking' }} />
         <Tabs.Screen name="diagnostics/index" options={{ title: 'Diagnostics' }} />
         <Tabs.Screen name="alerts/index" options={{ title: 'Group Chat' }} />
+        <Tabs.Screen name="database_test" options={{ title: 'DB Test',tabBarLabel: 'DB Test'}} />
       </Tabs>
     </ObservationProvider>
   );
