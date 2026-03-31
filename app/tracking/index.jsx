@@ -1,4 +1,4 @@
-// app/tracking/index.jsx - Redesigned with Consistent Header
+// app/tracking/index.jsx - Complete working version with multiple photos
 import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
@@ -14,24 +14,34 @@ import {
   KeyboardAvoidingView,
   Platform,
   StatusBar,
+  Image,
+  FlatList,
 } from 'react-native';
 import MapView, { Marker, Callout, Circle } from 'react-native-maps';
 import * as Location from 'expo-location';
+import * as ImagePicker from 'expo-image-picker';
+import * as FileSystem from 'expo-file-system';
 import { useObservations } from '../contexts/ObservationContext';
 import { useAuth } from '../contexts/AuthContext';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons, FontAwesome5 } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
+import { checkFreeSpace } from '../utils/storageHelper';
+
+const { width } = Dimensions.get('window');
 
 export default function TrackingScreen() {
   const insets = useSafeAreaInsets();
   const [location, setLocation] = useState(null);
   const [errorMsg, setErrorMsg] = useState(null);
+  const [accuracy, setAccuracy] = useState(null);
+  const [locationProvider, setLocationProvider] = useState('');
   const [gorillaSightings, setGorillaSightings] = useState([]);
   const [mapType, setMapType] = useState('standard');
   const [modalVisible, setModalVisible] = useState(false);
   const [loadingLocation, setLoadingLocation] = useState(true);
   const [locationName, setLocationName] = useState('');
+  const [imageUris, setImageUris] = useState([]);
   const [newSighting, setNewSighting] = useState({
     gorillaGroup: '',
     healthStatus: '',
@@ -45,24 +55,18 @@ export default function TrackingScreen() {
   const { user } = useAuth();
   const mapRef = useRef(null);
 
-  // Reverse geocoding - get location name from coordinates
+  // Reverse geocoding – get location name from coordinates
   const getLocationName = async (latitude, longitude) => {
     try {
-      const result = await Location.reverseGeocodeAsync({
-        latitude,
-        longitude,
-      });
+      const result = await Location.reverseGeocodeAsync({ latitude, longitude });
       if (result && result.length > 0) {
         const { name, district, city, region } = result[0];
         const parts = [name, district, city, region].filter(p => p && p !== '');
-        if (parts.length > 0) {
-          return parts.join(', ');
-        }
+        if (parts.length > 0) return parts.join(', ');
         return `${latitude.toFixed(4)}, ${longitude.toFixed(4)}`;
       }
       return `${latitude.toFixed(4)}, ${longitude.toFixed(4)}`;
     } catch (error) {
-      console.error('Reverse geocoding error:', error);
       return `${latitude.toFixed(4)}, ${longitude.toFixed(4)}`;
     }
   };
@@ -97,7 +101,7 @@ export default function TrackingScreen() {
     }
   }, [observations]);
 
-  // Get user's current location
+  // Get user's current location with fused approach (balanced power/accuracy)
   useEffect(() => {
     (async () => {
       try {
@@ -108,12 +112,33 @@ export default function TrackingScreen() {
           return;
         }
 
-        let currentLocation = await Location.getCurrentPositionAsync({
-          accuracy: Location.Accuracy.High,
-        });
-        setLocation(currentLocation.coords);
-        
-        const name = await getLocationName(currentLocation.coords.latitude, currentLocation.coords.longitude);
+        // Balanced accuracy (PRIORITY_BALANCED_POWER_ACCURACY)
+        const options = {
+          accuracy: Location.Accuracy.Balanced,
+          timeInterval: 5000,
+          distanceInterval: 10,
+        };
+        let currentLocation = await Location.getCurrentPositionAsync(options);
+        let bestLocation = currentLocation.coords;
+        let bestAccuracy = currentLocation.coords.accuracy;
+        let provider = 'GPS';
+
+        // Fallback to last known location (if available and more accurate)
+        const lastKnown = await Location.getLastKnownPositionAsync();
+        if (lastKnown && lastKnown.coords) {
+          const lastAccuracy = lastKnown.coords.accuracy;
+          if (lastAccuracy && (!bestAccuracy || lastAccuracy < bestAccuracy)) {
+            bestLocation = lastKnown.coords;
+            bestAccuracy = lastAccuracy;
+            provider = 'Last Known';
+          }
+        }
+
+        setLocation(bestLocation);
+        setAccuracy(bestAccuracy);
+        setLocationProvider(provider);
+
+        const name = await getLocationName(bestLocation.latitude, bestLocation.longitude);
         setLocationName(name);
         setLoadingLocation(false);
       } catch (error) {
@@ -129,9 +154,7 @@ export default function TrackingScreen() {
       Alert.alert('Location Unavailable', 'Waiting for GPS signal. Please try again.');
       return;
     }
-    
     const name = await getLocationName(location.latitude, location.longitude);
-    
     setNewSighting({
       gorillaGroup: '',
       healthStatus: '',
@@ -140,7 +163,100 @@ export default function TrackingScreen() {
       longitude: location.longitude,
       locationName: name,
     });
+    setImageUris([]);
     setModalVisible(true);
+  };
+
+  // Helper function to save image with proper error handling
+  const saveImage = async (uri) => {
+    try {
+      const filename = `gorilla_${Date.now()}_${Math.random().toString(36).substr(2, 9)}.jpg`;
+      const newUri = FileSystem.documentDirectory + filename;
+      
+      // Method 1: Try using copyAsync (most reliable)
+      try {
+        await FileSystem.copyAsync({ from: uri, to: newUri });
+        return newUri;
+      } catch (copyError) {
+        console.log('Copy failed, trying alternative method...');
+        
+        // Method 2: Try using the file URI directly
+        try {
+          const fileInfo = await FileSystem.getInfoAsync(uri);
+          if (fileInfo.exists) {
+            await FileSystem.copyAsync({ from: uri, to: newUri });
+            return newUri;
+          }
+        } catch (e) {
+          console.log('Alternative copy failed');
+        }
+        
+        // Method 3: Return original URI as fallback
+        return uri;
+      }
+    } catch (error) {
+      console.error('Error in saveImage:', error);
+      return uri; // Return original URI as fallback
+    }
+  };
+
+  const takePhoto = async () => {
+    try {
+      // Check storage space
+      let hasSpace = true;
+      try {
+        hasSpace = await checkFreeSpace();
+      } catch (storageError) {
+        console.log('Storage check note:', storageError?.message);
+        hasSpace = true;
+      }
+      
+      if (!hasSpace) return;
+      
+      const { status } = await ImagePicker.requestCameraPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Permission needed', 'Camera permission is required to take photos');
+        return;
+      }
+      
+      const result = await ImagePicker.launchCameraAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        quality: 0.8,
+      });
+      
+      if (!result.canceled && result.assets && result.assets[0]) {
+        const uri = result.assets[0].uri;
+        
+        // Show loading indicator
+        Alert.alert('Saving', 'Processing photo...', [{ text: 'OK' }], { cancelable: false });
+        
+        const savedUri = await saveImage(uri);
+        setImageUris(prev => [...prev, savedUri]);
+        
+        Alert.alert('Success', `Photo added! Total: ${imageUris.length + 1}`);
+      }
+    } catch (error) {
+      console.error('Camera error:', error);
+      Alert.alert('Camera Error', 'Unable to access camera. Please check permissions.');
+    }
+  };
+
+  const removeImage = (uriToRemove) => {
+    Alert.alert(
+      'Remove Photo',
+      'Are you sure you want to remove this photo?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { 
+          text: 'Remove', 
+          style: 'destructive',
+          onPress: () => {
+            setImageUris(prev => prev.filter(uri => uri !== uriToRemove));
+          }
+        }
+      ]
+    );
   };
 
   const handleAddSighting = async () => {
@@ -152,13 +268,18 @@ export default function TrackingScreen() {
     setSubmitting(true);
     try {
       const locationString = `${newSighting.latitude}, ${newSighting.longitude}`;
-      await addObservation({
-        gorillaGroup: newSighting.gorillaGroup.trim(),
-        location: locationString,
-        locationName: newSighting.locationName,
-        healthStatus: newSighting.healthStatus.trim() || 'Not specified',
-        notes: newSighting.notes.trim(),
-      });
+      
+      await addObservation(
+        {
+          gorillaGroup: newSighting.gorillaGroup.trim(),
+          location: locationString,
+          locationName: newSighting.locationName,
+          healthStatus: newSighting.healthStatus.trim() || 'Not specified',
+          notes: newSighting.notes.trim(),
+          imageUris: imageUris,
+        },
+        imageUris[0]
+      );
 
       setModalVisible(false);
       setNewSighting({
@@ -169,12 +290,13 @@ export default function TrackingScreen() {
         longitude: null,
         locationName: '',
       });
+      setImageUris([]);
 
       Alert.alert(
         'Success!',
-        isOnline 
-          ? 'Sighting saved and shared with all rangers!' 
-          : 'Sighting saved locally. Will sync when online.'
+        isOnline
+          ? `Sighting saved with ${imageUris.length} photo(s)! Shared with all rangers.`
+          : `Sighting saved locally with ${imageUris.length} photo(s). Will sync when online.`
       );
     } catch (error) {
       console.error('Error adding sighting:', error);
@@ -192,7 +314,7 @@ export default function TrackingScreen() {
     });
   };
 
-  const centerOnUser = async () => {
+  const centerOnUser = () => {
     if (location && mapRef.current) {
       mapRef.current.animateToRegion({
         latitude: location.latitude,
@@ -202,6 +324,18 @@ export default function TrackingScreen() {
       });
     }
   };
+
+  const renderImagePreview = ({ item }) => (
+    <View style={styles.imagePreviewItem}>
+      <Image source={{ uri: item }} style={styles.previewImage} />
+      <TouchableOpacity 
+        style={styles.removeImageButton} 
+        onPress={() => removeImage(item)}
+      >
+        <Ionicons name="close-circle" size={24} color="#EF4444" />
+      </TouchableOpacity>
+    </View>
+  );
 
   if (errorMsg) {
     return (
@@ -228,8 +362,7 @@ export default function TrackingScreen() {
   return (
     <View style={styles.container}>
       <StatusBar barStyle="light-content" backgroundColor="#1a1a2e" />
-      
-      {/* Header */}
+
       <LinearGradient
         colors={['#1a1a2e', '#16213e', '#0f3460']}
         style={[styles.headerGradient, { paddingTop: insets.top + 15 }]}
@@ -253,9 +386,15 @@ export default function TrackingScreen() {
             <Text style={styles.onlineText}>{isOnline ? 'Live' : 'Offline'}</Text>
           </View>
         </View>
+
+        <View style={styles.accuracyBadge}>
+          <Ionicons name="location-sharp" size={14} color="#10B981" />
+          <Text style={styles.accuracyText}>
+            Accuracy: {accuracy ? `${Math.round(accuracy)}m` : 'N/A'} • {locationProvider}
+          </Text>
+        </View>
       </LinearGradient>
 
-      {/* Map */}
       <MapView
         ref={mapRef}
         style={styles.map}
@@ -271,10 +410,7 @@ export default function TrackingScreen() {
         showsCompass={true}
       >
         <Circle
-          center={{
-            latitude: location.latitude,
-            longitude: location.longitude,
-          }}
+          center={{ latitude: location.latitude, longitude: location.longitude }}
           radius={500}
           strokeColor="rgba(16, 185, 129, 0.5)"
           fillColor="rgba(16, 185, 129, 0.1)"
@@ -283,19 +419,16 @@ export default function TrackingScreen() {
         {gorillaSightings.map(sighting => (
           <Marker
             key={sighting.id}
-            coordinate={{
-              latitude: sighting.latitude,
-              longitude: sighting.longitude,
-            }}
+            coordinate={{ latitude: sighting.latitude, longitude: sighting.longitude }}
             title={sighting.title}
             pinColor={sighting.status === 'attended' ? '#9CA3AF' : '#10B981'}
           >
             <Callout>
               <View style={styles.callout}>
                 <Text style={styles.calloutTitle}>🦍 {sighting.title}</Text>
-                <Text style={styles.calloutText}>📍 {sighting.locationName || 'Location unknown'}</Text>
-                <Text style={styles.calloutText}>🏥 {sighting.healthStatus || 'Not specified'}</Text>
-                <Text style={styles.calloutText}>👤 Added by: {sighting.userName || 'Anonymous'}</Text>
+                <Text style={styles.calloutText}>📍 {sighting.locationName || 'Unknown'}</Text>
+                <Text style={styles.calloutText}>🏥 {sighting.healthStatus || 'N/A'}</Text>
+                <Text style={styles.calloutText}>👤 {sighting.userName || 'Anonymous'}</Text>
                 {sighting.status === 'attended' && (
                   <View style={styles.attendedBadge}>
                     <Ionicons name="checkmark-circle" size={14} color="#10B981" />
@@ -311,7 +444,6 @@ export default function TrackingScreen() {
         ))}
       </MapView>
 
-      {/* Map Controls */}
       <View style={styles.topControls}>
         <TouchableOpacity style={styles.controlButton} onPress={toggleMapType}>
           <Ionicons name="layers-outline" size={18} color="white" />
@@ -319,49 +451,49 @@ export default function TrackingScreen() {
             {mapType === 'standard' ? 'Satellite' : mapType === 'satellite' ? 'Hybrid' : 'Standard'}
           </Text>
         </TouchableOpacity>
-
         <TouchableOpacity style={styles.controlButton} onPress={centerOnUser}>
           <Ionicons name="locate" size={18} color="white" />
           <Text style={styles.controlButtonText}>My Location</Text>
         </TouchableOpacity>
       </View>
 
-      {/* FAB Button */}
-      <TouchableOpacity style={styles.fab} onPress={addSightingAtCurrentLocation}>
+      <TouchableOpacity 
+        style={styles.fab} 
+        onPress={addSightingAtCurrentLocation}
+        activeOpacity={0.8}
+      >
         <LinearGradient
           colors={['#10B981', '#059669']}
           style={styles.fabGradient}
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 1 }}
         >
-          <Ionicons name="add" size={28} color="white" />
-          <Text style={{ color: 'white', fontSize: 10, marginTop: 2 }}>Add</Text>
+          <Text style={{ color: 'white', fontSize: 10, fontWeight: '900' }}>Add Sighting</Text>
+          <Ionicons name="add" size={26} color="white" />
         </LinearGradient>
       </TouchableOpacity>
 
-      {/* Info Panel */}
       <LinearGradient
-        colors={['rgba(0,0,0,0.8)', 'rgba(0,0,0,0.7)']}
+        colors={['rgba(0,0,0,0.9)', 'rgba(0,0,0,0.8)']}
         style={styles.infoPanel}
         start={{ x: 0, y: 0 }}
         end={{ x: 1, y: 1 }}
       >
         <Text style={styles.infoTitle}>🦍 Gorilla Activity Zones</Text>
         <Text style={styles.infoText}>
-          Green markers show active sightings. Gray markers are attended.
-          Blue circle shows your monitoring radius (500m).
+          Green markers: active sightings • Gray: attended
+          Blue circle: 500m monitoring radius
         </Text>
         <View style={styles.statsRow}>
-          <Text style={styles.statsText}>📍 Active: {gorillaSightings.filter(s => s.status !== 'attended').length}</Text>
-          <Text style={styles.statsText}>✓ Attended: {gorillaSightings.filter(s => s.status === 'attended').length}</Text>
+          <Text style={styles.statsText}>Active: {gorillaSightings.filter(s => s.status !== 'attended').length}</Text>
+          <Text style={styles.statsText}>Attended: {gorillaSightings.filter(s => s.status === 'attended').length}</Text>
         </View>
       </LinearGradient>
 
-      {/* Modal */}
       <Modal
         visible={modalVisible}
         animationType="slide"
-        transparent={true}
+        transparent
         onRequestClose={() => setModalVisible(false)}
       >
         <KeyboardAvoidingView
@@ -376,7 +508,7 @@ export default function TrackingScreen() {
               </TouchableOpacity>
             </View>
 
-            <ScrollView 
+            <ScrollView
               showsVerticalScrollIndicator={false}
               contentContainerStyle={styles.modalScrollContent}
               keyboardShouldPersistTaps="handled"
@@ -418,6 +550,30 @@ export default function TrackingScreen() {
                 textAlignVertical="top"
               />
 
+              {/* Camera / Image capture section with multiple photos */}
+              <View style={styles.cameraSection}>
+                <TouchableOpacity style={styles.cameraButton} onPress={takePhoto}>
+                  <Ionicons name="camera" size={24} color="#10B981" />
+                  <Text style={styles.cameraButtonText}>Take Photo</Text>
+                </TouchableOpacity>
+                
+                {imageUris.length > 0 && (
+                  <View style={styles.imageGallery}>
+                    <Text style={styles.imageGalleryTitle}>
+                      Photos ({imageUris.length}):
+                    </Text>
+                    <FlatList
+                      data={imageUris}
+                      renderItem={renderImagePreview}
+                      keyExtractor={(item, index) => index.toString()}
+                      horizontal
+                      showsHorizontalScrollIndicator={false}
+                      contentContainerStyle={styles.imageGalleryContent}
+                    />
+                  </View>
+                )}
+              </View>
+
               <View style={styles.modalButtons}>
                 <TouchableOpacity
                   style={[styles.modalButton, styles.cancelButton]}
@@ -452,12 +608,7 @@ export default function TrackingScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#F3F4F6',
-  },
-  
-  // Header
+  container: { flex: 1, backgroundColor: '#F3F4F6' },
   headerGradient: {
     paddingHorizontal: 20,
     paddingBottom: 20,
@@ -469,115 +620,72 @@ const styles = StyleSheet.create({
     right: 0,
     zIndex: 10,
   },
-  headerContent: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  headerLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
-  headerIcon: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: 'rgba(16, 185, 129, 0.15)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  headerTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#FFFFFF',
-  },
-  headerSubtitle: {
-    fontSize: 12,
-    color: 'rgba(255,255,255,0.7)',
-    marginTop: 2,
-  },
-  onlineBadge: {
+  headerContent: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  headerIcon: { width: 44, height: 44, borderRadius: 22, backgroundColor: 'rgba(16,185,129,0.15)', justifyContent: 'center', alignItems: 'center' },
+  headerTitle: { fontSize: 20, fontWeight: 'bold', color: '#FFFFFF' },
+  headerSubtitle: { fontSize: 12, color: 'rgba(255,255,255,0.7)', marginTop: 2 },
+  onlineBadge: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'rgba(16,185,129,0.15)', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20 },
+  onlineDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#6B7280' },
+  onlineActive: { backgroundColor: '#10B981', shadowColor: '#10B981', shadowOffset: { width: 0, height: 0 }, shadowOpacity: 0.5, shadowRadius: 4 },
+  onlineText: { fontSize: 12, fontWeight: '600', color: '#10B981' },
+  accuracyBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    backgroundColor: 'rgba(16, 185, 129, 0.15)',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
     borderRadius: 20,
+    marginTop: 12,
+    alignSelf: 'flex-start',
   },
-  onlineDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: '#6B7280',
-  },
-  onlineActive: {
-    backgroundColor: '#10B981',
-    shadowColor: '#10B981',
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.5,
-    shadowRadius: 4,
-  },
-  onlineText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#10B981',
-  },
-  
-  // Map
-  map: {
-    width: Dimensions.get('window').width,
-    height: Dimensions.get('window').height,
-  },
-  
-  // Map Controls
+  accuracyText: { fontSize: 11, color: '#10B981', marginLeft: 6 },
+  map: { width: width, height: Dimensions.get('window').height },
   topControls: {
     position: 'absolute',
-    top: 140,
+    top: 180,
     left: 16,
     right: 16,
     flexDirection: 'row',
     justifyContent: 'space-between',
+    zIndex: 100,
   },
   controlButton: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    backgroundColor: 'rgba(0,0,0,0.7)',
+    backgroundColor: 'rgba(0,0,0,0.75)',
     paddingVertical: 10,
     paddingHorizontal: 14,
     borderRadius: 24,
-    backdropFilter: 'blur(10px)',
+    elevation: 5,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 3,
   },
-  controlButtonText: {
-    color: 'white',
-    fontSize: 12,
-    fontWeight: '500',
-  },
-  
-  // FAB
+  controlButtonText: { color: 'white', fontSize: 12, fontWeight: '500' },
   fab: {
     position: 'absolute',
-    bottom: 150,
-    right: 20,
-    borderRadius: 30,
+    bottom: 140,
+    right: 17,
+    borderRadius: 20,
     overflow: 'hidden',
-    elevation: 8,
+    elevation: 10,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 6,
+    shadowOpacity: 0.4,
+    shadowRadius: 8,
+    zIndex: 1000,
   },
   fabGradient: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
+    width: 85,
+    height: 60,
+    display: 'flex',
+    flexDirection: 'column',
     justifyContent: 'center',
     alignItems: 'center',
   },
-  
-  // Info Panel
   infoPanel: {
     position: 'absolute',
     bottom: 20,
@@ -585,7 +693,8 @@ const styles = StyleSheet.create({
     right: 16,
     borderRadius: 16,
     padding: 14,
-    backgroundColor: 'rgba(0,0,0,0.75)',
+    backgroundColor: 'rgba(0,0,0,0.85)',
+    zIndex: 100,
   },
   infoTitle: {
     fontSize: 14,
@@ -595,7 +704,7 @@ const styles = StyleSheet.create({
   },
   infoText: {
     fontSize: 11,
-    color: '#D1D5DB',
+    color: '#E5E7EB',
     lineHeight: 16,
     marginBottom: 8,
   },
@@ -604,186 +713,84 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingTop: 8,
     borderTopWidth: 1,
-    borderTopColor: 'rgba(255,255,255,0.1)',
+    borderTopColor: 'rgba(255,255,255,0.15)',
   },
   statsText: {
     fontSize: 11,
     color: '#9CA3AF',
   },
-  
-  // Callout
-  callout: {
-    width: 240,
-    padding: 10,
+  callout: { width: 240, padding: 10 },
+  calloutTitle: { fontSize: 14, fontWeight: 'bold', color: '#1F2937', marginBottom: 4 },
+  calloutText: { fontSize: 11, color: '#6B7280', marginTop: 2 },
+  attendedBadge: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#D1FAE5', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 12, marginTop: 6, alignSelf: 'flex-start' },
+  attendedText: { fontSize: 10, fontWeight: '600', color: '#10B981' },
+  calloutTime: { fontSize: 10, color: '#9CA3AF', marginTop: 6, fontStyle: 'italic' },
+  centerContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#F3F4F6', padding: 20 },
+  errorText: { fontSize: 16, color: '#EF4444', textAlign: 'center', marginTop: 12, marginBottom: 20 },
+  loadingText: { marginTop: 12, fontSize: 16, color: '#6B7280' },
+  loadingSubtext: { marginTop: 6, fontSize: 12, color: '#9CA3AF' },
+  retryButton: { backgroundColor: '#10B981', paddingHorizontal: 24, paddingVertical: 12, borderRadius: 12 },
+  buttonText: { color: 'white', fontWeight: 'bold' },
+  modalContainer: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.5)' },
+  modalContent: { backgroundColor: '#FFF', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, maxHeight: '85%' },
+  modalScrollContent: { paddingBottom: 20 },
+  modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 },
+  modalTitle: { fontSize: 22, fontWeight: 'bold', color: '#1F2937' },
+  locationPreview: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: '#D1FAE5', padding: 12, borderRadius: 12, marginBottom: 20 },
+  locationText: { fontSize: 13, color: '#059669', flex: 1, fontWeight: '500' },
+  inputLabel: { fontSize: 14, fontWeight: '600', marginBottom: 6, color: '#374151' },
+  input: { borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 12, padding: 12, fontSize: 14, marginBottom: 16, backgroundColor: '#FAFAFA', color: '#1F2937' },
+  textArea: { height: 100, textAlignVertical: 'top' },
+  cameraSection: {
+    marginBottom: 16,
   },
-  calloutTitle: {
-    fontSize: 14,
-    fontWeight: 'bold',
-    color: '#1F2937',
-    marginBottom: 4,
-  },
-  calloutText: {
-    fontSize: 11,
-    color: '#6B7280',
-    marginTop: 2,
-  },
-  attendedBadge: {
+  cameraButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
-    backgroundColor: '#D1FAE5',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 12,
-    marginTop: 6,
-    alignSelf: 'flex-start',
-  },
-  attendedText: {
-    fontSize: 10,
-    fontWeight: '600',
-    color: '#10B981',
-  },
-  calloutTime: {
-    fontSize: 10,
-    color: '#9CA3AF',
-    marginTop: 6,
-    fontStyle: 'italic',
-  },
-  
-  // Error/Loading States
-  centerContainer: {
-    flex: 1,
     justifyContent: 'center',
-    alignItems: 'center',
+    gap: 8,
     backgroundColor: '#F3F4F6',
-    padding: 20,
-  },
-  errorText: {
-    fontSize: 16,
-    color: '#EF4444',
-    textAlign: 'center',
-    marginTop: 12,
-    marginBottom: 20,
-  },
-  loadingText: {
-    marginTop: 12,
-    fontSize: 16,
-    color: '#6B7280',
-  },
-  loadingSubtext: {
-    marginTop: 6,
-    fontSize: 12,
-    color: '#9CA3AF',
-  },
-  retryButton: {
-    backgroundColor: '#10B981',
-    paddingHorizontal: 24,
-    paddingVertical: 12,
-    borderRadius: 12,
-  },
-  buttonText: {
-    color: 'white',
-    fontWeight: 'bold',
-  },
-  
-  // Modal
-  modalContainer: {
-    flex: 1,
-    justifyContent: 'flex-end',
-    backgroundColor: 'rgba(0,0,0,0.5)',
-  },
-  modalContent: {
-    backgroundColor: '#FFFFFF',
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    padding: 20,
-    maxHeight: '85%',
-  },
-  modalScrollContent: {
-    paddingBottom: 20,
-  },
-  modalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 20,
-  },
-  modalTitle: {
-    fontSize: 22,
-    fontWeight: 'bold',
-    color: '#1F2937',
-  },
-  locationPreview: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    backgroundColor: '#D1FAE5',
     padding: 12,
     borderRadius: 12,
-    marginBottom: 20,
   },
-  locationText: {
-    fontSize: 13,
-    color: '#059669',
-    flex: 1,
+  cameraButtonText: { fontSize: 14, fontWeight: '500', color: '#10B981' },
+  imageGallery: {
+    marginTop: 12,
+  },
+  imageGalleryTitle: {
+    fontSize: 12,
     fontWeight: '500',
-  },
-  inputLabel: {
-    fontSize: 14,
-    fontWeight: '600',
-    marginBottom: 6,
     color: '#374151',
+    marginBottom: 8,
   },
-  input: {
+  imageGalleryContent: {
+    paddingRight: 16,
+  },
+  imagePreviewItem: {
+    position: 'relative',
+    marginRight: 10,
+  },
+  previewImage: { 
+    width: 80, 
+    height: 80, 
+    borderRadius: 8,
     borderWidth: 1,
     borderColor: '#E5E7EB',
+  },
+  removeImageButton: {
+    position: 'absolute',
+    top: -8,
+    right: -8,
+    backgroundColor: 'white',
     borderRadius: 12,
-    padding: 12,
-    fontSize: 14,
-    marginBottom: 16,
-    backgroundColor: '#FAFAFA',
-    color: '#1F2937',
+    overflow: 'hidden',
   },
-  textArea: {
-    height: 100,
-    textAlignVertical: 'top',
-  },
-  modalButtons: {
-    flexDirection: 'row',
-    gap: 12,
-    marginTop: 8,
-    marginBottom: 12,
-  },
-  modalButton: {
-    flex: 1,
-    paddingVertical: 14,
-    borderRadius: 12,
-    alignItems: 'center',
-  },
-  cancelButton: {
-    backgroundColor: '#F3F4F6',
-  },
-  cancelButtonText: {
-    color: '#6B7280',
-    fontWeight: '500',
-    fontSize: 16,
-  },
-  submitButton: {
-    backgroundColor: '#10B981',
-  },
-  submitButtonDisabled: {
-    backgroundColor: '#D1D5DB',
-  },
-  submitButtonText: {
-    color: 'white',
-    fontWeight: 'bold',
-    fontSize: 16,
-  },
-  syncNote: {
-    fontSize: 11,
-    color: '#6B7280',
-    textAlign: 'center',
-    fontStyle: 'italic',
-    marginTop: 8,
-  },
+  modalButtons: { flexDirection: 'row', gap: 12, marginTop: 8, marginBottom: 12 },
+  modalButton: { flex: 1, paddingVertical: 14, borderRadius: 12, alignItems: 'center' },
+  cancelButton: { backgroundColor: '#F3F4F6' },
+  cancelButtonText: { color: '#6B7280', fontWeight: '500', fontSize: 16 },
+  submitButton: { backgroundColor: '#10B981' },
+  submitButtonDisabled: { backgroundColor: '#D1D5DB' },
+  submitButtonText: { color: 'white', fontWeight: 'bold', fontSize: 16 },
+  syncNote: { fontSize: 11, color: '#6B7280', textAlign: 'center', fontStyle: 'italic', marginTop: 8 },
 });

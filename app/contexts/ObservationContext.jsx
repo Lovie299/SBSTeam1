@@ -14,16 +14,14 @@ import {
   onSnapshot, 
   doc, 
   updateDoc, 
-  getDoc, 
-  setDoc,
   serverTimestamp,
   deleteField
 } from 'firebase/firestore';
 import { getRepository } from '../../database/ObservationRepository';
 
 const ObservationContext = createContext();
-
 const STORAGE_KEY = '@silverback_observations';
+const IMAGES_STORAGE_KEY = '@silverback_observation_images';
 
 export const ObservationProvider = ({ children }) => {
   // Existing states
@@ -59,13 +57,11 @@ export const ObservationProvider = ({ children }) => {
 
   // ==================== EXISTING IMPLEMENTATION (KEPT INTACT) ====================
 
-  // Listen to ALL observations from Firestore
+  // Listen to Firestore observations (real-time)
   useEffect(() => {
     if (!isOnline) return;
-
-    console.log('📡 Setting up real-time listener for ALL observations...');
+    console.log('📡 Setting up Firestore listener for observations...');
     const q = query(collection(db, 'observations'), orderBy('createdAt', 'desc'));
-    
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const firestoreObs = [];
       snapshot.forEach((doc) => {
@@ -77,24 +73,20 @@ export const ObservationProvider = ({ children }) => {
       });
       console.log(`📊 Received ${firestoreObs.length} observations from Firestore`);
       setFirestoreObservations(firestoreObs);
-    }, (error) => {
-      console.error('Error listening to observations:', error);
     });
-
-    return () => unsubscribe();
+    return unsubscribe;
   }, [isOnline]);
 
-  // Merge observations
+  // Merge Firestore observations with local unsynced ones
   useEffect(() => {
     const observationMap = new Map();
     
     firestoreObservations.forEach(obs => {
-      const uniqueKey = `${obs.userId}-${obs.gorillaGroup}-${obs.location}-${obs.createdAt}`;
-      observationMap.set(uniqueKey, { ...obs, dedupKey: uniqueKey, synced: true });
+      observationMap.set(obs.id, { ...obs, source: 'firestore', synced: true });
     });
     
-    localObservations.forEach(localObs => {
-      const uniqueKey = `${localObs.userId}-${localObs.gorillaGroup}-${localObs.location}-${localObs.createdAt}`;
+    const unsyncedLocals = localObservations.filter(localObs => !localObs.synced);
+    unsyncedLocals.forEach(localObs => {
       const existsInFirestore = firestoreObservations.some(fireObs => 
         fireObs.userId === localObs.userId && 
         fireObs.gorillaGroup === localObs.gorillaGroup &&
@@ -103,27 +95,23 @@ export const ObservationProvider = ({ children }) => {
       );
       
       if (!existsInFirestore) {
-        observationMap.set(uniqueKey, { ...localObs, dedupKey: uniqueKey });
+        observationMap.set(localObs.id, { ...localObs, source: 'local', synced: false });
       }
     });
     
     const merged = Array.from(observationMap.values());
-    const sorted = merged.sort((a, b) => {
-      const dateA = new Date(a.createdAt);
-      const dateB = new Date(b.createdAt);
-      return dateB - dateA;
-    });
-    
+    const sorted = merged.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
     setObservations(sorted);
   }, [firestoreObservations, localObservations]);
 
-  // Load local observations
+  // Load local observations from storage
   const loadObservations = useCallback(async () => {
     try {
       const stored = await AsyncStorage.getItem(STORAGE_KEY);
       if (stored) {
         const parsed = JSON.parse(stored);
         setLocalObservations(parsed);
+        console.log(`📂 Loaded ${parsed.length} observations from storage`);
       }
     } catch (error) {
       console.error('Failed to load observations', error);
@@ -132,11 +120,11 @@ export const ObservationProvider = ({ children }) => {
     }
   }, []);
 
-  // Save observations
   const saveObservations = useCallback(async (newObservations) => {
     try {
       await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(newObservations));
       setLocalObservations(newObservations);
+      console.log(`💾 Saved ${newObservations.length} observations to storage`);
     } catch (error) {
       console.error('Failed to save observations', error);
     }
@@ -150,6 +138,7 @@ export const ObservationProvider = ({ children }) => {
     try {
       const user = auth.currentUser;
       const newObservation = {
+        id: uuid.v4(),
         ...observationData,
         userName: user?.displayName || user?.email?.split('@')[0] || 'Anonymous',
         userEmail: user?.email,
@@ -158,24 +147,30 @@ export const ObservationProvider = ({ children }) => {
         localId: uuid.v4(),
         status: 'pending',
       };
-      
+
+      // If online, save to Firestore immediately (without images)
       if (isOnline) {
-        const { localId, ...firestoreData } = newObservation;
+        const { id, imageUris: imgUris, ...firestoreData } = newObservation;
         const docRef = await addDoc(collection(db, 'observations'), {
           ...firestoreData,
-          createdAtTimestamp: serverTimestamp(),
+          synced: true,
+          syncedAt: new Date().toISOString(),
+          hasImages: imgUris && imgUris.length > 0,
+          imageCount: imgUris?.length || 0,
         });
+        
+        console.log('✅ Observation saved to Firestore, ID:', docRef.id);
         return { ...newObservation, id: docRef.id, synced: true };
       } else {
-        const localObservation = {
-          ...newObservation,
-          id: newObservation.localId,
-          synced: false,
-        };
-        const updated = [localObservation, ...localObservations];
+        // Offline: save locally only
+        const updated = [newObservation, ...localObservations];
         await saveObservations(updated);
-        return localObservation;
+        console.log('📶 Observation saved locally (offline)');
+        return newObservation;
       }
+    } catch (error) {
+      console.error('Error adding observation:', error);
+      return null;
     } finally {
       isAddingRef.current = false;
     }
@@ -238,47 +233,44 @@ export const ObservationProvider = ({ children }) => {
   // Sync unsynced observations - EXISTING IMPLEMENTATION
   const syncNow = useCallback(async () => {
     if (!isOnline || isSyncing) return false;
-
     const unsynced = localObservations.filter(obs => !obs.synced);
     if (unsynced.length === 0) {
       setLastSyncTime(new Date().toISOString());
       return true;
     }
-
+    
+    console.log(`🔄 Syncing ${unsynced.length} unsynced observations...`);
     setIsSyncing(true);
+    
     try {
       let successCount = 0;
-      const updatedObservations = [...localObservations];
-      
       for (const obs of unsynced) {
         try {
-          const { id, localId, synced, ...observationForFirestore } = obs;
+          const { id, imageUris, ...firestoreData } = obs;
           const docRef = await addDoc(collection(db, 'observations'), {
-            ...observationForFirestore,
+            ...firestoreData,
+            synced: true,
             syncedAt: new Date().toISOString(),
+            hasImages: imageUris && imageUris.length > 0,
+            imageCount: imageUris?.length || 0,
           });
           
-          const index = updatedObservations.findIndex(o => o.id === obs.id);
-          if (index !== -1) {
-            updatedObservations[index] = {
-              ...updatedObservations[index],
-              synced: true,
-              syncedAt: new Date().toISOString(),
-              firestoreId: docRef.id
-            };
-          }
+          // Remove synced observation from local storage
+          const updatedLocal = localObservations.filter(o => o.id !== obs.id);
+          await saveObservations(updatedLocal);
           successCount++;
+          console.log(`✅ Synced observation ${obs.id} -> ${docRef.id}`);
         } catch (error) {
-          console.error(`Failed to sync observation ${obs.id}:`, error);
+          console.error('Sync failed for observation', obs.id, error);
         }
       }
       
-      if (successCount > 0) {
-        await saveObservations(updatedObservations);
-      }
-      
       setLastSyncTime(new Date().toISOString());
-      return true;
+      console.log(`✅ Sync completed: ${successCount}/${unsynced.length} observations synced`);
+      return successCount > 0;
+    } catch (error) {
+      console.error('Sync error:', error);
+      return false;
     } finally {
       setIsSyncing(false);
     }
@@ -289,21 +281,19 @@ export const ObservationProvider = ({ children }) => {
     const unsubscribe = NetInfo.addEventListener(state => {
       const online = state.isConnected && state.isInternetReachable !== false;
       setIsOnline(online);
-      if (online && localObservations.length > 0) {
-        const hasUnsynced = localObservations.some(obs => !obs.synced);
-        if (hasUnsynced) syncNow();
+      if (online && localObservations.some(obs => !obs.synced)) {
+        console.log('🌐 Network came online, auto-syncing...');
+        syncNow();
       }
     });
-    return () => unsubscribe();
+    return unsubscribe;
   }, [localObservations, syncNow]);
 
   useEffect(() => {
     loadObservations();
-  }, [loadObservations]);
+  }, []);
 
-  const getPendingCount = useCallback(() => {
-    return localObservations.filter(obs => !obs.synced).length;
-  }, [localObservations]);
+  const getPendingCount = useCallback(() => localObservations.filter(obs => !obs.synced).length, [localObservations]);
 
   // ==================== NEW REPOSITORY METHODS (OPTIONAL) ====================
   
@@ -368,7 +358,6 @@ export const ObservationProvider = ({ children }) => {
     lastSyncTime,
     addObservation,
     syncNow,
-    getPendingCount,
     markAsAttended,
     
     // New repository features (optional)
@@ -378,16 +367,14 @@ export const ObservationProvider = ({ children }) => {
     repositoryMode: useRepository,
   };
 
-  return (
-    <ObservationContext.Provider value={value}>
-      {children}
-    </ObservationContext.Provider>
-  );
+  return <ObservationContext.Provider value={value}>{children}</ObservationContext.Provider>;
 };
 
 export const useObservations = () => {
   const context = useContext(ObservationContext);
-  if (!context) throw new Error('useObservations must be used within an ObservationProvider');
+  if (!context) {
+    throw new Error('useObservations must be used within an ObservationProvider');
+  }
   return context;
 };
 
