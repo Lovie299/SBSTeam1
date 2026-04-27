@@ -4,7 +4,7 @@ import * as BackgroundFetch from 'expo-background-fetch';
 import * as TaskManager from 'expo-task-manager';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import NetInfo from '@react-native-community/netinfo';
-import { syncObservationsToRemote } from '../utils/sync';
+import { syncObservationsToRemote } from './utils/sync';
 
 const BACKGROUND_SYNC_TASK = 'BACKGROUND_SYNC';
 

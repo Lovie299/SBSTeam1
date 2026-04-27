@@ -1,4 +1,4 @@
-// app/diagnostics/index.jsx - Redesigned with Consistent Styling
+// app/diagnostics/index.jsx - Redesigned with Performance Tab
 import React, { useState, useEffect } from 'react';
 import {
   View,
@@ -19,6 +19,7 @@ import * as Battery from 'expo-battery';
 import * as Brightness from 'expo-brightness';
 import NetInfo from '@react-native-community/netinfo';
 import * as Network from 'expo-network';
+import performanceMonitor from '../utils/performanceMonitor'; // Fixed import path
 
 export default function DiagnosticsScreen() {
   const insets = useSafeAreaInsets();
@@ -28,12 +29,35 @@ export default function DiagnosticsScreen() {
   const [lifecycleLogs, setLifecycleLogs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [ipAddress, setIpAddress] = useState('');
+  const [performanceMetrics, setPerformanceMetrics] = useState({
+    batteryPercentage: 100,
+    batteryState: 'unknown',
+    batteryIcon: 'battery-full',
+    batteryColor: '#10B981',
+    memoryUsageMB: 0,
+    memoryPercentage: 0,
+    storageFreeMB: 0,
+    storageUsedPercentage: 0,
+    isLowBattery: false,
+  });
 
   useEffect(() => {
     loadHardwareInfo();
     setupNetworkListener();
     setupLifecycleListener();
+    initPerformanceMonitor();
   }, []);
+
+  const initPerformanceMonitor = async () => {
+    await performanceMonitor.initialize();
+    
+    // Subscribe to performance updates
+    const unsubscribe = performanceMonitor.addListener((data) => {
+      setPerformanceMetrics(data);
+    });
+    
+    return () => unsubscribe();
+  };
 
   const loadHardwareInfo = async () => {
     try {
@@ -326,6 +350,108 @@ export default function DiagnosticsScreen() {
     </View>
   );
 
+  const renderPerformanceTab = () => (
+    <View style={styles.tabContent}>
+      <InfoCard title="Battery Status" icon="🔋" gradient={['#FFFFFF', '#F8FAFC']}>
+        <View style={styles.performanceMetric}>
+          <View style={styles.performanceMetricHeader}>
+            <Ionicons name={performanceMetrics.batteryIcon} size={28} color={performanceMetrics.batteryColor} />
+            <Text style={[styles.performanceMetricValue, { color: performanceMetrics.batteryColor }]}>
+              {performanceMetrics.batteryPercentage}%
+            </Text>
+          </View>
+          <View style={styles.progressBarContainer}>
+            <View 
+              style={[styles.progressBar, { 
+                width: `${performanceMetrics.batteryPercentage}%`, 
+                backgroundColor: performanceMetrics.batteryColor 
+              }]} 
+            />
+          </View>
+          <Text style={styles.performanceMetricSubtext}>
+            Status: {performanceMetrics.batteryState === 'charging' ? '🔌 Charging' : 
+                      performanceMetrics.batteryState === 'full' ? '✓ Full' : '⚡ Discharging'}
+          </Text>
+          {performanceMetrics.isLowBattery && (
+            <View style={styles.warningBadge}>
+              <Ionicons name="warning-outline" size={16} color="#DC2626" />
+              <Text style={styles.warningBadgeText}>Low Battery - Consider charging</Text>
+            </View>
+          )}
+        </View>
+      </InfoCard>
+
+      <InfoCard title="Memory Usage" icon="💾" gradient={['#FFFFFF', '#F8FAFC']}>
+        <View style={styles.performanceMetric}>
+          <View style={styles.performanceMetricHeader}>
+            <Ionicons name="hardware-chip-outline" size={28} color="#3B82F6" />
+            <Text style={[styles.performanceMetricValue, { color: '#3B82F6' }]}>
+              {performanceMetrics.memoryUsageMB} MB
+            </Text>
+          </View>
+          <View style={styles.progressBarContainer}>
+            <View 
+              style={[styles.progressBar, { 
+                width: `${performanceMetrics.memoryPercentage}%`, 
+                backgroundColor: '#3B82F6' 
+              }]} 
+            />
+          </View>
+          <Text style={styles.performanceMetricSubtext}>
+            Memory usage: {performanceMetrics.memoryPercentage}% of available
+          </Text>
+        </View>
+      </InfoCard>
+
+      <InfoCard title="Storage Status" icon="💿" gradient={['#FFFFFF', '#F8FAFC']}>
+        <View style={styles.performanceMetric}>
+          <View style={styles.performanceMetricHeader}>
+            <Ionicons name="save-outline" size={28} color="#8B5CF6" />
+            <Text style={[styles.performanceMetricValue, { color: '#8B5CF6' }]}>
+              {performanceMetrics.storageFreeMB} MB free
+            </Text>
+          </View>
+          <View style={styles.progressBarContainer}>
+            <View 
+              style={[styles.progressBar, { 
+                width: `${performanceMetrics.storageUsedPercentage}%`, 
+                backgroundColor: '#8B5CF6' 
+              }]} 
+            />
+          </View>
+          <Text style={styles.performanceMetricSubtext}>
+            Used: {performanceMetrics.storageUsedPercentage}% of storage
+          </Text>
+        </View>
+      </InfoCard>
+
+      <InfoCard title="Performance Tips" icon="💡" gradient={['#FFFFFF', '#F8FAFC']}>
+        <View style={styles.tipsList}>
+          {performanceMetrics.isLowBattery && (
+            <View style={styles.tipItem}>
+              <Ionicons name="flash-outline" size={16} color="#F59E0B" />
+              <Text style={styles.tipText}>Battery low - reduce screen brightness</Text>
+            </View>
+          )}
+          {performanceMetrics.storageFreeMB < 100 && (
+            <View style={styles.tipItem}>
+              <Ionicons name="alert-circle-outline" size={16} color="#EF4444" />
+              <Text style={styles.tipText}>Storage almost full - clear old photos</Text>
+            </View>
+          )}
+          <View style={styles.tipItem}>
+            <Ionicons name="sync-outline" size={16} color="#10B981" />
+            <Text style={styles.tipText}>Sync data when on WiFi to save battery</Text>
+          </View>
+          <View style={styles.tipItem}>
+            <Ionicons name="location-outline" size={16} color="#3B82F6" />
+            <Text style={styles.tipText}>GPS uses more battery - disable when not tracking</Text>
+          </View>
+        </View>
+      </InfoCard>
+    </View>
+  );
+
   if (loading) {
     return (
       <View style={styles.loadingContainer}>
@@ -375,6 +501,12 @@ export default function DiagnosticsScreen() {
           isActive={activeTab === 'lifecycle'}
           onPress={() => setActiveTab('lifecycle')}
         />
+        <TabButton
+          title="Performance"
+          icon="speedometer-outline"
+          isActive={activeTab === 'performance'}
+          onPress={() => setActiveTab('performance')}
+        />
       </View>
 
       {/* Content */}
@@ -385,6 +517,7 @@ export default function DiagnosticsScreen() {
         {activeTab === 'hardware' && renderHardwareTab()}
         {activeTab === 'network' && renderNetworkTab()}
         {activeTab === 'lifecycle' && renderLifecycleTab()}
+        {activeTab === 'performance' && renderPerformanceTab()}
       </ScrollView>
 
       {/* Footer Info */}
@@ -399,6 +532,7 @@ export default function DiagnosticsScreen() {
           {activeTab === 'hardware' && 'Hardware diagnostics help rangers monitor device health in remote areas'}
           {activeTab === 'network' && 'Network monitoring enables offline-first data sync when signal returns'}
           {activeTab === 'lifecycle' && 'Lifecycle management preserves data during app state changes'}
+          {activeTab === 'performance' && 'Performance monitoring helps conserve battery and manage storage'}
         </Text>
       </LinearGradient>
     </View>
@@ -430,13 +564,15 @@ const styles = StyleSheet.create({
   // Tab Bar
   tabBarContainer: {
     flexDirection: 'row',
-    paddingHorizontal: 16,
+    paddingHorizontal: 8,
     paddingVertical: 12,
-    gap: 12,
+    gap: 8,
     backgroundColor: '#1a1a2e',
+    flexWrap: 'wrap',
   },
   tabButton: {
     flex: 1,
+    minWidth: '22%',
     borderRadius: 24,
     overflow: 'hidden',
   },
@@ -451,25 +587,25 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 8,
+    gap: 6,
     paddingVertical: 10,
   },
   tabButtonInactive: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 8,
+    gap: 6,
     backgroundColor: 'rgba(255,255,255,0.1)',
     paddingVertical: 10,
     borderRadius: 24,
   },
   tabButtonText: {
-    fontSize: 14,
+    fontSize: 12,
     fontWeight: '500',
     color: '#9CA3AF',
   },
   tabButtonTextActive: {
-    fontSize: 14,
+    fontSize: 12,
     fontWeight: '600',
     color: 'white',
   },
@@ -642,7 +778,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   lifecycleButtonText: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '600',
     color: 'white',
   },
@@ -689,6 +825,66 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#6B7280',
     lineHeight: 18,
+  },
+  
+  // Performance Tab
+  performanceMetric: {
+    padding: 16,
+  },
+  performanceMetricHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+  },
+  performanceMetricValue: {
+    fontSize: 24,
+    fontWeight: 'bold',
+  },
+  performanceMetricSubtext: {
+    fontSize: 12,
+    color: '#6B7280',
+    marginTop: 8,
+    textAlign: 'center',
+  },
+  progressBarContainer: {
+    height: 8,
+    backgroundColor: '#E5E7EB',
+    borderRadius: 4,
+    overflow: 'hidden',
+  },
+  progressBar: {
+    height: 8,
+    borderRadius: 4,
+  },
+  warningBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#FEE2E2',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
+    marginTop: 12,
+  },
+  warningBadgeText: {
+    fontSize: 12,
+    color: '#DC2626',
+    fontWeight: '500',
+  },
+  tipsList: {
+    padding: 16,
+    gap: 12,
+  },
+  tipItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  tipText: {
+    fontSize: 13,
+    color: '#374151',
+    flex: 1,
   },
   
   // Footer

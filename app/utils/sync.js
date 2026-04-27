@@ -1,5 +1,5 @@
 // utils/sync.js
-import { db, auth } from '../firebaseConfig';
+import { db, auth } from '../../firebaseConfig';
 import { collection, addDoc, doc, updateDoc, getDoc, setDoc } from 'firebase/firestore';
 
 /**

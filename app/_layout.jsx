@@ -1,8 +1,8 @@
-// app/_layout.jsx --> This is the main layout file for the SilverBackSentry app. It sets up the overall structure, including authentication handling, tab navigation, and background sync registration. Qn 8
-
+// app/_layout.jsx - Make sure the Tabs.Screen names match the files
 import { Tabs } from 'expo-router';
 import { ObservationProvider } from './contexts/ObservationContext';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
+import { BiometricProvider } from './contexts/BiometricContext';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { StatusBar, Text, View, TouchableOpacity, StyleSheet, ActivityIndicator } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -13,7 +13,7 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { useEffect } from 'react';
 import { registerBackgroundSync } from './backgroundSync';
-
+import PerformanceMonitor from './utils/performanceMonitor';
 
 // Custom Tab Bar Component
 function CustomTabBar({ state, descriptors, navigation }) {
@@ -22,17 +22,17 @@ function CustomTabBar({ state, descriptors, navigation }) {
   const tabs = [
     { name: 'index', label: 'Home', icon: 'home-outline', activeIcon: 'home', route: '/', gradient: ['#10B981', '#059669'] },
     { name: 'observations/index', label: 'Sightings', icon: 'leaf-outline', activeIcon: 'leaf', route: '/observations', gradient: ['#3B82F6', '#2563EB'] },
-    { name: 'tracking/index', label: 'Map', icon: 'map-outline', activeIcon: 'map', route: '/tracking', gradient: ['#8B5CF6', '#6D28D9'] },
-    { name: 'diagnostics/index', label: 'System', icon: 'hardware-chip-outline', activeIcon: 'hardware-chip', route: '/diagnostics', gradient: ['#F59E0B', '#D97706'] },
-    { name: 'alerts/index', label: 'Chat', icon: 'chatbubble-outline', activeIcon: 'chatbubble', route: '/alerts', gradient: ['#EF4444', '#DC2626'] },
+    { name: 'tracking/index', label: 'Tracking', icon: 'map-outline', activeIcon: 'map', route: '/tracking', gradient: ['#8B5CF6', '#6D28D9'] },
+    { name: 'system', label: 'System', icon: 'hardware-chip-outline', activeIcon: 'hardware-chip', route: '/system', gradient: ['#F59E0B', '#D97706'] },
+    { name: 'assistant', label: 'Assistant', icon: 'chatbubble-outline', activeIcon: 'chatbubble', route: '/assistant', gradient: ['#EF4444', '#DC2626'] },
   ];
 
   const getActiveIndex = () => {
     if (currentRoute === '/') return 0;
     if (currentRoute.includes('/observations')) return 1;
     if (currentRoute.includes('/tracking')) return 2;
-    if (currentRoute.includes('/diagnostics')) return 3;
-    if (currentRoute.includes('/alerts')) return 4;
+    if (currentRoute.includes('/system')) return 3;
+    if (currentRoute.includes('/assistant')) return 4;
     return 0;
   };
 
@@ -43,8 +43,8 @@ function CustomTabBar({ state, descriptors, navigation }) {
     if (index === 0) navigation.navigate('index');
     else if (index === 1) navigation.navigate('observations/index');
     else if (index === 2) navigation.navigate('tracking/index');
-    else if (index === 3) navigation.navigate('diagnostics/index');
-    else if (index === 4) navigation.navigate('alerts/index');
+    else if (index === 3) navigation.navigate('system');
+    else if (index === 4) navigation.navigate('assistant');
   };
 
   return (
@@ -78,9 +78,10 @@ function CustomTabBar({ state, descriptors, navigation }) {
 function AppContent() {
   const { user, loading } = useAuth();
 
-  // Register background sync once when the app mounts (only once)
   useEffect(() => {
     registerBackgroundSync().catch(console.error);
+    PerformanceMonitor.initialize().catch(console.error);
+    console.log('App started - background services ready');
   }, []);
 
   if (loading) {
@@ -113,9 +114,8 @@ function AppContent() {
         <Tabs.Screen name="index" options={{ title: 'Home', headerShown: false }} />
         <Tabs.Screen name="observations/index" options={{ title: 'Sightings' }} />
         <Tabs.Screen name="tracking/index" options={{ title: 'Gorilla Tracking' }} />
-        <Tabs.Screen name="diagnostics/index" options={{ title: 'Diagnostics' }} />
-        <Tabs.Screen name="alerts/index" options={{ title: 'Group Chat' }} />
-        <Tabs.Screen name="database_test" options={{ title: 'DB Test',tabBarLabel: 'DB Test'}} />
+        <Tabs.Screen name="system" options={{ title: 'System' }} />
+        <Tabs.Screen name="assistant" options={{ title: 'Assistant' }} />
       </Tabs>
     </ObservationProvider>
   );
@@ -126,21 +126,77 @@ export default function RootLayout() {
     <SafeAreaProvider>
       <StatusBar barStyle="light-content" backgroundColor="#1a1a2e" />
       <AuthProvider>
-        <AppContent />
+        <BiometricProvider>
+          <AppContent />
+        </BiometricProvider>
       </AuthProvider>
     </SafeAreaProvider>
   );
 }
 
 const styles = StyleSheet.create({
-  tabBarContainer: { flexDirection: 'row', height: 75, backgroundColor: '#FFFFFF', borderTopWidth: 0, elevation: 15, shadowColor: '#000', shadowOffset: { width: 0, height: -5 }, shadowOpacity: 0.08, shadowRadius: 10 },
-  tabItem: { flex: 1, overflow: 'hidden', marginHorizontal: 4, marginVertical: 6, borderRadius: 16 },
-  activeTabGradient: { flex: 1, alignItems: 'center', justifyContent: 'center', borderRadius: 16, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.15, shadowRadius: 4, elevation: 5 },
-  activeTabContent: { alignItems: 'center', justifyContent: 'center', paddingVertical: 8 },
-  inactiveTabContent: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#FFFFFF', borderRadius: 16 },
-  activeTabLabel: { fontSize: 11, fontWeight: '600', color: '#FFFFFF', marginTop: 4, letterSpacing: 0.3 },
-  inactiveTabLabel: { fontSize: 11, fontWeight: '500', color: '#9CA3AF', marginTop: 4, letterSpacing: 0.3 },
-  activeIndicator: { width: 20, height: 3, backgroundColor: '#FFFFFF', borderRadius: 1.5, marginTop: 6 },
+  tabBarContainer: { 
+    flexDirection: 'row', 
+    height: 75, 
+    backgroundColor: '#FFFFFF', 
+    borderTopWidth: 0, 
+    elevation: 15, 
+    shadowColor: '#000', 
+    shadowOffset: { width: 0, height: -5 }, 
+    shadowOpacity: 0.08, 
+    shadowRadius: 10 
+  },
+  tabItem: { 
+    flex: 1, 
+    overflow: 'hidden', 
+    marginHorizontal: 4, 
+    marginVertical: 6, 
+    borderRadius: 16 
+  },
+  activeTabGradient: { 
+    flex: 1, 
+    alignItems: 'center', 
+    justifyContent: 'center', 
+    borderRadius: 16, 
+    shadowColor: '#000', 
+    shadowOffset: { width: 0, height: 2 }, 
+    shadowOpacity: 0.15, 
+    shadowRadius: 4, 
+    elevation: 5 
+  },
+  activeTabContent: { 
+    alignItems: 'center', 
+    justifyContent: 'center', 
+    paddingVertical: 8 
+  },
+  inactiveTabContent: { 
+    flex: 1, 
+    alignItems: 'center', 
+    justifyContent: 'center', 
+    backgroundColor: '#FFFFFF', 
+    borderRadius: 16 
+  },
+  activeTabLabel: { 
+    fontSize: 11, 
+    fontWeight: '600', 
+    color: '#FFFFFF', 
+    marginTop: 4, 
+    letterSpacing: 0.3 
+  },
+  inactiveTabLabel: { 
+    fontSize: 11, 
+    fontWeight: '500', 
+    color: '#9CA3AF', 
+    marginTop: 4, 
+    letterSpacing: 0.3 
+  },
+  activeIndicator: { 
+    width: 20, 
+    height: 3, 
+    backgroundColor: '#FFFFFF', 
+    borderRadius: 1.5, 
+    marginTop: 6 
+  },
   loadingContainer: { flex: 1 },
   loadingGradient: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   loadingText: { marginTop: 12, fontSize: 16, color: '#FFFFFF', fontWeight: '500' },

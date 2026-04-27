@@ -1,0 +1,17 @@
+{
+  "project_info": {
+    "project_number": "123456789012",
+    "project_id": "silverback-sentry",
+    "storage_bucket": "silverback-sentry.appspot.com"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:123456789012:android:abcdef123456",
+        "android_client_info": {
+          "package_name": "com.yourcompany.silverbacksentry"
+        }
+      }
+    }
+  ]
+}

@@ -2,7 +2,7 @@
   "expo": {
     "name": "SilverBack Sentry",
     "slug": "silverback-sentry",
-    "version": "1.0.0",
+    "version": "2.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -11,23 +11,66 @@
       "resizeMode": "contain",
       "backgroundColor": "#2c5f2d"
     },
-    "android": {
-      "package": "com.yourcompany.silverbacksentry",
-      "googleServicesFile": "./google-services.json"
-    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
     "ios": {
-      "bundleIdentifier": "com.yourcompany.silverbacksentry",
-      "googleServicesFile": "./GoogleService-Info.plist"
+      "supportsTablet": true,
+      "bundleIdentifier": "com.silverback.sentry",
+      "infoPlist": {
+        "UIBackgroundModes": ["fetch"],
+        "NSFaceIDUsageDescription": "SilverBack Sentry uses Face ID to securely authenticate rangers before accessing sensitive data and marking sightings as attended."
+      }
+    },
+    "android": {
+      "package": "com.silverback.sentry",
+      "adaptiveIcon": {
+        "backgroundColor": "#2c5f2d",
+        "foregroundImage": "./assets/adaptive-icon.png"
+      },
+      "permissions": [
+        "android.permission.USE_BIOMETRIC",
+        "android.permission.USE_FINGERPRINT",
+        "android.permission.CAMERA",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_COARSE_LOCATION"
+      ]
     },
     "plugins": [
-      "@react-native-firebase/app",
-      "@react-native-firebase/auth",
-      "expo-sqlite"
+      "expo-router",
+      "expo-local-authentication",
+      "expo-image-picker",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash.png",
+          "imageWidth": 200,
+          "resizeMode": "contain",
+          "backgroundColor": "#2c5f2d"
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "SilverBack Sentry needs access to your location to track gorilla sightings and help conservation efforts."
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "SilverBack Sentry needs camera access to capture gorilla photos for documentation."
+        }
+      ]
     ],
+    "experiments": {
+      "typedRoutes": true,
+      "reactCompiler": true
+    },
     "extra": {
       "eas": {
         "projectId": "798ce32d-838f-4b02-a514-9ff558ae595d"
       }
-    }
+    },
+    "owner": "silverback-sentry"
   }
 }
